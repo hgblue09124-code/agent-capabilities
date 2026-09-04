@@ -2,12 +2,21 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from types import MappingProxyType
+from typing import Any, Mapping, Optional
 
 from agent_capabilities.contracts.context import CapabilityContext
 from agent_capabilities.contracts.lifecycle import CapabilityStatus
 from agent_capabilities.contracts.request import CapabilityRequest
 from agent_capabilities.contracts.result import CapabilityResult
+
+
+def _make_immutable_dict(d: Optional[dict[str, Any]]) -> MappingProxyType[str, Any]:
+    if d is None:
+        return MappingProxyType({})
+    if isinstance(d, MappingProxyType):
+        return d
+    return MappingProxyType(dict(d))
 
 
 @dataclass(frozen=True)
@@ -18,9 +27,27 @@ class CapabilityMetadata:
     name: str
     version: str
     description: str
-    actions: list[str] = field(default_factory=list)
-    permissions: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    actions: tuple[str, ...] = field(default_factory=tuple)
+    permissions: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.id or not isinstance(self.id, str):
+            raise ValueError("CapabilityMetadata id must be a non-empty string.")
+        if not self.name or not isinstance(self.name, str):
+            raise ValueError("CapabilityMetadata name must be a non-empty string.")
+
+        acts = self.actions
+        if not isinstance(acts, tuple):
+            object.__setattr__(self, "actions", tuple(acts if acts else ()))
+
+        perms = self.permissions
+        if not isinstance(perms, tuple):
+            object.__setattr__(self, "permissions", tuple(perms if perms else ()))
+
+        meta = self.metadata
+        if not isinstance(meta, MappingProxyType):
+            object.__setattr__(self, "metadata", _make_immutable_dict(meta))
 
 
 class Capability(ABC):
@@ -44,11 +71,7 @@ class Capability(ABC):
 
     @abstractmethod
     def validate(self, request: CapabilityRequest) -> None:
-        """Validate the request before execution.
-
-        Must raise CapabilityValidationError or UnsupportedActionError if invalid.
-        Must NOT have arbitrary side effects or external network calls.
-        """
+        """Validate the request before execution."""
         pass
 
     @abstractmethod

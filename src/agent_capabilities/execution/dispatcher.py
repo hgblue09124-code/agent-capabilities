@@ -1,5 +1,6 @@
 """Capability invocation dispatcher and execution records."""
 
+import logging
 import time
 import uuid
 from typing import Callable, List, Optional
@@ -13,6 +14,8 @@ from agent_capabilities.errors import (
     CapabilityDisabledError,
     CapabilityError,
     CapabilityExecutionError,
+    CapabilityNotReadyError,
+
     CapabilityNotFoundError,
     CapabilityValidationError,
     PermissionDeniedError,
@@ -21,13 +24,37 @@ from agent_capabilities.errors import (
 from agent_capabilities.permissions.model import check_permissions
 from agent_capabilities.registry.registry import CapabilityRegistry
 
+logger = logging.getLogger(__name__)
+
 
 class CapabilityDispatcher:
     """Invocation boundary responsible for validating and dispatching capability requests."""
 
-    def __init__(self, registry: CapabilityRegistry) -> None:
+    def __init__(
+        self,
+        registry: CapabilityRegistry,
+        on_observer_error: Optional[Callable[[Exception, ExecutionRecord], None]] = None,
+    ) -> None:
         self.registry = registry
         self._event_listeners: List[Callable[[ExecutionRecord], None]] = []
+        self._on_observer_error = on_observer_error or self._default_observer_error_handler
+        self._observer_errors: List[tuple[Exception, ExecutionRecord]] = []
+
+    def _default_observer_error_handler(self, exc: Exception, record: ExecutionRecord) -> None:
+        """Default handler for observer exceptions. Records error without hiding it."""
+        logger.error(
+            "Observer error handling ExecutionRecord for capability '%s', action '%s': %s",
+            record.capability_id,
+            record.action,
+            exc,
+            exc_info=True,
+        )
+        self._observer_errors.append((exc, record))
+
+    @property
+    def observer_errors(self) -> List[tuple[Exception, ExecutionRecord]]:
+        """Return list of observer errors recorded during dispatch operations."""
+        return list(self._observer_errors)
 
     def add_event_listener(self, listener: Callable[[ExecutionRecord], None]) -> None:
         """Register a callback to receive ExecutionRecord events."""
@@ -36,21 +63,7 @@ class CapabilityDispatcher:
     def dispatch(
         self, request: CapabilityRequest, context: Optional[CapabilityContext] = None
     ) -> CapabilityResult:
-        """Dispatch a capability invocation request.
-
-        Workflow:
-        1. Context resolution
-        2. Resolve capability from registry
-        3. Lifecycle check (must be AVAILABLE or ENABLED)
-        4. Action check
-        5. Permission boundary check
-        6. Input validation (call capability.validate)
-        7. Execution (call capability.execute)
-        8. Record event & return CapabilityResult
-
-        Typed errors raised during validation/permission/execution are wrapped or returned as failed CapabilityResult or re-raised depending on level.
-        Note: The dispatcher handles framework-level validation cleanly. Unexpected exceptions during execution are wrapped in CapabilityExecutionError or captured in result.
-        """
+        """Dispatch a capability invocation request."""
         start_time = time.time()
         req_ctx = context or request.context or CapabilityContext(request_id=str(uuid.uuid4()))
         cap_id = request.capability_id
@@ -60,9 +73,11 @@ class CapabilityDispatcher:
             # 1. Resolve capability
             capability = self.registry.get(cap_id)
 
-            # 2. Lifecycle check
+            # 2. Lifecycle check (ONLY ENABLED IS EXECUTABLE)
             if capability.status == CapabilityStatus.DISABLED:
                 raise CapabilityDisabledError(cap_id)
+            elif capability.status != CapabilityStatus.ENABLED:
+                raise CapabilityNotReadyError(cap_id, capability.status.value)
 
             # 3. Action check
             metadata = capability.metadata
@@ -70,7 +85,6 @@ class CapabilityDispatcher:
                 raise UnsupportedActionError(cap_id, action)
 
             # 4. Permission boundary check
-            # Check if required permissions by capability for this action/overall are met by context
             is_permitted, missing_perms = check_permissions(
                 required_permissions=metadata.permissions,
                 granted_permissions=req_ctx.permissions,
@@ -120,7 +134,6 @@ class CapabilityDispatcher:
             raise exc
 
         except Exception as exc:
-            # Unexpected execution or framework error
             duration = time.time() - start_time
             exec_err = CapabilityExecutionError(
                 capability_id=cap_id,
@@ -148,5 +161,13 @@ class CapabilityDispatcher:
         for listener in self._event_listeners:
             try:
                 listener(record)
-            except Exception:
-                pass
+            except Exception as exc:
+                try:
+                    self._on_observer_error(exc, record)
+                except Exception as handler_exc:
+                    logger.critical(
+                        "Observer error handler failed: %s (original observer error: %s)",
+                        handler_exc,
+                        exc,
+                        exc_info=True,
+                    )

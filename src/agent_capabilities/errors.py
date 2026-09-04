@@ -53,6 +53,14 @@ class CapabilityLifecycleError(CapabilityError):
         )
 
 
+class CapabilityNotReadyError(CapabilityLifecycleError):
+    """Raised when dispatching a capability that is not yet enabled (e.g. REGISTERED or AVAILABLE)."""
+
+    def __init__(self, capability_id: str, status: str, message: Optional[str] = None) -> None:
+        msg = message or f"Capability '{capability_id}' is not ready for execution (current status: {status}). Must be ENABLED."
+        super().__init__(capability_id, current_status=status, target_status="ENABLED", message=msg)
+
+
 class UnsupportedActionError(CapabilityError):
     """Raised when a capability does not support the requested action."""
 
