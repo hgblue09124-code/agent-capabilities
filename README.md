@@ -1,103 +1,45 @@
 # agent-capabilities
 
-Independent, modular capability layer for **Agent-Core**.
+Supplemental capability and adapter layer for **Agent-Core**.
 
 ---
 
-## 1. Overview
+## 1. Overview & Architectural Boundary
 
 `agent-capabilities` defines and implements the infrastructure required for external capabilities and modules (e.g. GitHub, Browser, Filesystem, Communication) to be safely discovered, validated, invoked, observed, and evolved independently of the agent kernel.
 
-### Architectural Analogy
-- **Agent-Core** = kernel
-- **agent-capabilities** = device/module ecosystem
-
----
-
-## 2. Architectural Boundary & Non-Negotiables
-
-Preserve strict separation between core reasoning and capability execution:
+### Strict Architectural Boundaries
+- **Agent-Core** retains full authority over:
+  - Identity, memory, cognition, reasoning, planning, strategy, policy, and autonomy.
+- **agent-capabilities** provides:
+  - Stable capability contracts, discovery registry, invocation boundary (dispatcher), permission validation, lifecycle rules, and execution record events.
 
 ```text
-Agent-Core (kernel)
+Agent-Core (Kernel / Authority)
     │
-    │ capability contract / invocation boundary
+    │ Capability Contract / Invocation Boundary
     ▼
-agent-capabilities (framework v1)
+agent-capabilities (Hardened Framework v1)
     │
-    ├── Echo capability (framework proof)
-    ├── GitHub capability (future)
-    ├── Browser capability (future)
-    ├── Filesystem capability (future)
-    └── Communication capability (future)
-```
-
-### What this repository IS NOT:
-- Not an agent brain/kernel
-- Not a memory or state container
-- Not an identity or philosophy manager
-- Not a strategy learning system
-- Not an autonomous agent cognition engine
-
-The framework communicates through explicit, typed contracts and interfaces. It has zero hard dependencies on `agent-core`.
-
----
-
-## 3. Current Framework Status
-
-**Version:** `v1.0.0` (Framework Foundation Only)
-
-- [x] **Capability Contracts** (`Capability`, `CapabilityMetadata`, `CapabilityRequest`, `CapabilityResult`, `CapabilityContext`)
-- [x] **Lifecycle Management** (`REGISTERED` -> `AVAILABLE` -> `ENABLED` -> `DISABLED`)
-- [x] **Capability Registry** (Thread-safe registration, lookup, lifecycle transitions)
-- [x] **Invocation Boundary / Dispatcher** (Input validation, lifecycle checks, permission boundary, execution)
-- [x] **Permission Boundary** (Explicit permission declaration and runtime enforcement)
-- [x] **Typed Error Model** (`CapabilityError`, `CapabilityNotFoundError`, `PermissionDeniedError`, etc.)
-- [x] **Lightweight Observability** (`ExecutionRecord` events emitted per invocation)
-- [x] **Proof-of-Concept Capability** (`EchoCapability`)
-
-> **Note:** Concrete external capabilities such as GitHub, Browser, Filesystem, Coding, and Communication modules are future extensions. Only `EchoCapability` is implemented as a framework proof in v1.
-
----
-
-## 4. Architecture & Workflow
-
-When a request is dispatched, the capability pipeline executes as follows:
-
-```text
-CapabilityRequest
-   │
-   ▼
-1. Context Resolution & ID Assignment
-   │
-   ▼
-2. Capability Lookup (Registry)
-   │
-   ▼
-3. Lifecycle Check (Status != DISABLED)
-   │
-   ▼
-4. Supported Action Check
-   │
-   ▼
-5. Permission Boundary Check (Required vs Granted Permissions)
-   │
-   ▼
-6. Input Validation (capability.validate)
-   │
-   ▼
-7. Execution (capability.execute)
-   │
-   ▼
-8. Observability Event Emission (ExecutionRecord)
-   │
-   ▼
-CapabilityResult
+    ├── Echo capability (Framework proof)
+    ├── GitHub capability (Future module)
+    ├── Browser capability (Future module)
+    └── Filesystem capability (Future module)
 ```
 
 ---
 
-## 5. Usage Example
+## 2. Framework v1 Hardening Summary
+
+- **Observer Exception Semantics:** Observer listener errors are captured explicitly without silently swallowing exceptions or crashing capability execution.
+- **True Immutability:** `CapabilityContext` and `CapabilityMetadata` enforce immutable data structures (`frozenset`, `tuple`, `MappingProxyType`) preventing capabilities from mutating context permissions, metadata, or cancellation settings.
+- **Coherent Lifecycle Rules:** Execution requires `CapabilityStatus.ENABLED`. Unready states (`REGISTERED`, `AVAILABLE`) raise `CapabilityNotReadyError`, and `DISABLED` raises `CapabilityDisabledError`. Capabilities can be safely disabled and re-enabled.
+- **Contract & Permission Boundary Validation:** Strict constructor input validation and immutable permission checking reject malformed requests or permission escalation attempts.
+- **Zero Agent-Core Dependencies:** Operates strictly as a independent supplemental layer.
+
+---
+
+## 3. Usage Example
 
 ```python
 from agent_capabilities.contracts import CapabilityContext, CapabilityRequest
@@ -114,7 +56,7 @@ echo_cap = EchoCapability()
 registry.register(echo_cap)
 registry.enable("echo")
 
-# 3. Formulate request & context
+# 3. Formulate immutable request & context
 context = CapabilityContext(request_id="req-001", caller="agent-core")
 request = CapabilityRequest(
     capability_id="echo",
@@ -133,18 +75,11 @@ else:
 
 ---
 
-## 6. Running Tests & Quality Gates
+## 4. CI / Quality Gates
 
-### Run Test Suite
+Run complete test suite and package build:
+
 ```bash
 pytest
+python -m build
 ```
-
-All 27 unit and architecture tests verify:
-- Registry operations (register, lookup, list, unregister, duplicate prevention)
-- Lifecycle transition enforcement
-- Invocation boundary pipeline & validation
-- Permission checking (no self-elevation, missing permissions rejected)
-- Typed error handling
-- Output determinism
-- Architectural boundary (no Agent-Core imports)
